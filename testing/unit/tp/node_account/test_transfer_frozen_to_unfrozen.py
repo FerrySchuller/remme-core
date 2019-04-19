@@ -446,3 +446,104 @@ def test_transfer_from_frozen_already_defrosted_in_two_week_period():
         NodeAccountHandler().apply(transaction=transaction_request, context=mock_context)
 
     assert 'Passed not enough time from previous defrost.' == str(error.value)
+
+
+def test_transfer_from_frozen_share_overflow():
+    internal_transfer_payload = EmptyPayload()
+
+    transaction_payload = TransactionPayload()
+    transaction_payload.method = NodeAccountMethod.TRANSFER_FROM_FROZEN_TO_UNFROZEN
+    transaction_payload.data = internal_transfer_payload.SerializeToString()
+
+    serialized_transaction_payload = transaction_payload.SerializeToString()
+
+    transaction_header = TransactionHeader(
+        signer_public_key=RANDOM_NODE_PUBLIC_KEY,
+        family_name=TRANSACTION_REQUEST_ACCOUNT_HANDLER_PARAMS.get('family_name'),
+        family_version=TRANSACTION_REQUEST_ACCOUNT_HANDLER_PARAMS.get('family_version'),
+        inputs=INPUTS,
+        outputs=OUTPUTS,
+        dependencies=[],
+        payload_sha512=hash512(data=serialized_transaction_payload),
+        batcher_public_key=RANDOM_NODE_PUBLIC_KEY,
+        nonce=time.time().hex().encode(),
+    )
+
+    serialized_header = transaction_header.SerializeToString()
+
+    transaction_request = TpProcessRequest(
+        header=transaction_header,
+        payload=serialized_transaction_payload,
+        signature=create_signer(private_key=NODE_ACCOUNT_FROM_PRIVATE_KEY).sign(serialized_header),
+    )
+    now = datetime.utcnow()
+
+    FROZEN = MINIMUM_STAKE + 500
+
+    shares = [
+        ShareInfo(
+            block_num=10,
+            frozen_share=client_to_real_amount(0.6),
+            reward=client_to_real_amount(6000),
+            block_timestamp=int((datetime.utcnow() - timedelta(days=28)).timestamp()),
+            defrost_months=0,
+        ),
+        ShareInfo(
+            block_num=11,
+            frozen_share=client_to_real_amount(0.3),
+            reward=client_to_real_amount(2000),
+            block_timestamp=int((datetime.utcnow() - timedelta(days=28)).timestamp()),
+            defrost_months=0,
+        ),
+        ShareInfo(
+            block_num=12,
+            frozen_share=client_to_real_amount(0.4),
+            reward=client_to_real_amount(2500),
+            block_timestamp=int((datetime.utcnow() - timedelta(days=28)).timestamp()),
+            defrost_months=0,
+        ),
+        ShareInfo(
+            block_num=13,
+            frozen_share=client_to_real_amount(0.7),
+            reward=client_to_real_amount(2100),
+            block_timestamp=int((datetime.utcnow() - timedelta(days=28)).timestamp()),
+            defrost_months=0,
+        ),
+    ]
+    mock_context = create_context(account_from_frozen_balance=FROZEN,
+                                  account_to_unfrozen_balance=UNFROZEN,
+                                  shares=shares)
+
+    NodeAccountHandler().apply(transaction=transaction_request, context=mock_context)
+
+    state_as_list = mock_context.get_state(addresses=[
+        NODE_ACCOUNT_ADDRESS_FROM,
+    ])
+    state_as_dict = {entry.address: entry.data for entry in state_as_list}
+
+    node_acc = NodeAccount()
+    node_acc.ParseFromString(state_as_dict[NODE_ACCOUNT_ADDRESS_FROM])
+
+    delta1 = 300  # 0.6 * 1/12 * 6000
+    delta2 = 50  # 0.3 * 1/12 * 2000
+    delta3 = 83.25  # 0.4 * 1/12 * 2500
+    delta4 = 122.43  # 0.7 * 1/12 * 2100
+
+    delta = delta1 + delta2 + delta3 + delta4
+
+    assert node_acc.reputation.frozen == client_to_real_amount(FROZEN - delta + delta4)
+    assert node_acc.reputation.unfrozen == client_to_real_amount(UNFROZEN + delta - delta4)
+
+    assert node_acc.last_defrost_timestamp is not None
+
+    assert len(node_acc.shares) == 4
+
+    share1 = node_acc.shares[0]
+    share2 = node_acc.shares[1]
+    share3 = node_acc.shares[2]
+    share4 = node_acc.shares[3]
+
+    assert share1.defrost_months == 1
+    assert share2.defrost_months == 1
+    assert share3.defrost_months == 1
+    assert share4.defrost_months == 0
