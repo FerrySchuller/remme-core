@@ -44,7 +44,7 @@ Copy the command below and paste into the terminal which will create an ``SSL ce
          sudo -i sed -i "s@websitenamewithdomain@$DOMAIN@" /etc/nginx/nginx.conf && \
          sudo systemctl restart nginx && \
          echo "1 5 * * * $USER /usr/bin/certbot renew" | sudo tee -a /etc/crontab > /dev/null && \
-         echo "5 5 * * * /usr/bin/systemctl reload nginx" | sudo tee -a /etc/crontab > /dev/null
+         echo "5 5 * * * /bin/systemctl reload nginx" | sudo tee -a /etc/crontab > /dev/null
 
 To check if your node has completed a correct ``SSL certificate`` setup, use the following commands, being logged in your server.
 
